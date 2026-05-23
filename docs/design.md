@@ -1,0 +1,682 @@
+# nominatim-mcp-server — Design
+
+## MCP Surface
+
+### Tools
+
+| Name | Description | Key Inputs | Annotations |
+|:-----|:------------|:-----------|:------------|
+| `nominatim_geocode` | Forward geocoding: convert a place name or address to coordinates and structured place data. Supports free-form and structured address input. | `query` (free-form) OR structured fields (`street`, `city`, `state`, `country`, `postalcode`); `limit`, `countrycodes`, `layer`, `featureType` | `readOnlyHint: true` |
+| `nominatim_reverse` | Reverse geocoding: convert lat/lon to the nearest address or place. Returns the closest OSM object with full address breakdown. | `lat`, `lon`, `zoom` (detail level 3–18), `layer` | `readOnlyHint: true` |
+| `nominatim_lookup` | Look up address details for specific OSM objects by their IDs. Useful when an OSM node/way/relation ID is already known. | `osm_ids` (up to 50, prefixed with N/W/R) | `readOnlyHint: true` |
+| `overpass_query_nearby` | Find OSM features within a radius around a point. The primary convenience tool for "what's near X?" spatial queries. Covers nodes, ways, and relations. | `lat`, `lon`, `radius_meters`, `amenity` (or `tag_key` + `tag_value`), `limit` | `readOnlyHint: true` |
+| `overpass_query_bbox` | Find OSM features within a bounding box. Useful for area surveys, not proximity searches. | `south`, `west`, `north`, `east`; `amenity` (or `tag_key` + `tag_value`), `limit` | `readOnlyHint: true` |
+| `overpass_query_raw` | Execute a raw Overpass QL query for advanced spatial queries the convenience tools don't cover. | `query` (Overpass QL string), `timeout` | `readOnlyHint: true` |
+
+### Resources
+
+None — this server is tool-only. Geocoding results are point-in-time lookups with no stable addressable identity that would benefit from resource URIs. All data is accessible via tools.
+
+### Prompts
+
+None — the domain is data/action oriented. Tool descriptions are sufficient to guide agent usage.
+
+---
+
+## Overview
+
+An MCP server bridging OpenStreetMap's two primary data APIs into a unified geocoding and spatial query interface. Nominatim handles text-to-coordinates and coordinates-to-text; Overpass handles "what exists at/near/within this location?" Both are free, require no API keys, and together cover the full range of location-resolution workflows agents need.
+
+Primary use cases:
+- Resolving place names to coordinates before calling other servers (NWS weather, earthquake data, GBIF biodiversity)
+- Address parsing and validation
+- Finding points of interest within a geographic area
+- Reverse geocoding coordinates back to human-readable addresses
+
+Global coverage. Read-only.
+
+---
+
+## Requirements
+
+- Forward geocoding: free-form text and structured address queries via Nominatim `/search`
+- Reverse geocoding: lat/lon → address/place via Nominatim `/reverse`, with zoom-level detail control
+- OSM ID lookup: address details for known OSM node/way/relation IDs via Nominatim `/lookup`
+- Spatial POI search: find features by tag within a radius (around filter) via Overpass
+- Spatial bbox search: find features by tag within a bounding box via Overpass
+- Raw Overpass QL: full query expressiveness for advanced use cases
+- No authentication required for either API
+- Nominatim public instance: max 1 req/sec; valid User-Agent required
+- Overpass public instance: rate limit is 4 concurrent slots, up to 10,000 queries/day and 1 GB/day
+- No bulk geocoding patterns (systematic grids, exhaustive POI downloads)
+- Must not autocomplete — Nominatim explicitly forbids autocomplete use
+- Must cache results in `ctx.state` to avoid redundant requests to the same query within a session
+- Attribution: data © OpenStreetMap contributors, ODbL 1.0
+
+---
+
+## Services
+
+| Service | Wraps | Used By |
+|:--------|:------|:--------|
+| `NominatimService` | Nominatim API (nominatim.openstreetmap.org) | `nominatim_geocode`, `nominatim_reverse`, `nominatim_lookup` |
+| `OverpassService` | Overpass API (overpass-api.de/api/interpreter) | `overpass_query_nearby`, `overpass_query_bbox`, `overpass_query_raw` |
+
+Both services are stateless HTTP clients with retry logic and session-level result caching via `ctx.state`.
+
+---
+
+## Config
+
+| Env Var | Required | Description |
+|:--------|:---------|:------------|
+| `NOMINATIM_BASE_URL` | No | Override the Nominatim endpoint (default: `https://nominatim.openstreetmap.org`). Use when running a private instance. |
+| `OVERPASS_BASE_URL` | No | Override the Overpass endpoint (default: `https://overpass-api.de/api/interpreter`). Supports mirror instances. |
+| `NOMINATIM_USER_AGENT` | No | Identifies the application to Nominatim (default: `nominatim-mcp-server/<version>`). Must be set if the default violates the operator's policy. |
+
+---
+
+## Implementation Order
+
+1. Config and server setup (`server-config.ts` with the three optional env vars)
+2. `NominatimService` — HTTP client, retry, response normalization, session cache
+3. `OverpassService` — HTTP client, Overpass QL builder helpers, retry, session cache
+4. `nominatim_geocode` tool
+5. `nominatim_reverse` tool
+6. `nominatim_lookup` tool
+7. `overpass_query_nearby` tool
+8. `overpass_query_bbox` tool
+9. `overpass_query_raw` tool
+
+Each tool is independently testable after its service is in place.
+
+---
+
+## Domain Mapping
+
+### Nominatim operations
+
+| Operation | Endpoint | Notes |
+|:----------|:---------|:------|
+| Forward geocode (free-form) | `GET /search?q=...&format=jsonv2` | Up to 40 results; returns importance score for ranking |
+| Forward geocode (structured) | `GET /search?street=...&city=...&format=jsonv2` | Cannot combine with `q` |
+| Reverse geocode | `GET /reverse?lat=...&lon=...&format=jsonv2` | Returns exactly one result or error |
+| OSM ID lookup | `GET /lookup?osm_ids=N123,W456&format=jsonv2` | Up to 50 IDs per request; prefixed N/W/R |
+
+All Nominatim requests: `format=jsonv2`, `addressdetails=1` by default. `extratags=1` optional (adds wikipedia, opening_hours, phone, etc.).
+
+**Response shape (jsonv2):**
+```json
+{
+  "place_id": 324761213,
+  "osm_type": "way",
+  "osm_id": 12903132,
+  "lat": "47.6205131",
+  "lon": "-122.3493036",
+  "category": "man_made",
+  "type": "tower",
+  "place_rank": 30,
+  "importance": 0.439,
+  "addresstype": "man_made",
+  "name": "Space Needle",
+  "display_name": "Space Needle, 400, Broad Street, ..., Seattle, ...",
+  "address": {
+    "man_made": "Space Needle",
+    "house_number": "400",
+    "road": "Broad Street",
+    "city": "Seattle",
+    "county": "King County",
+    "state": "Washington",
+    "postcode": "98109",
+    "country": "United States",
+    "country_code": "us"
+  },
+  "boundingbox": ["47.6203", "47.6207", "-122.3496", "-122.3491"],
+  "extratags": { "phone": "+1-206-905-2100", "website": "...", "wikidata": "Q5317" }
+}
+```
+
+Observed field sparsity: `name` is absent for address-only results; `extratags` present only when requested; `address` contents vary by feature type (not normalized).
+
+### Overpass operations
+
+All queries POST to `/api/interpreter` with `Content-Type: application/x-www-form-urlencoded`, body `data=<query>`.
+
+**Radius query (around filter):**
+```
+[out:json][timeout:25];
+(
+  node["amenity"="hospital"](around:3000,47.6062,-122.3321);
+  way["amenity"="hospital"](around:3000,47.6062,-122.3321);
+  relation["amenity"="hospital"](around:3000,47.6062,-122.3321);
+);
+out center tags;
+```
+
+**Bbox query:**
+```
+[out:json][timeout:25];
+(
+  node["leisure"="park"](47.60,-122.34,47.62,-122.31);
+  way["leisure"="park"](47.60,-122.34,47.62,-122.31);
+);
+out center tags;
+```
+
+**Response shape:**
+```json
+{
+  "version": 0.6,
+  "osm3s": { "timestamp_osm_base": "2026-05-23T17:01:31Z" },
+  "elements": [
+    {
+      "type": "way",
+      "id": 169511257,
+      "center": { "lat": 47.6043096, "lon": -122.3238285 },
+      "tags": {
+        "name": "Harborview Medical Center",
+        "amenity": "hospital",
+        "beds": "413",
+        "phone": "+1-206-744-3000"
+      }
+    }
+  ]
+}
+```
+
+Nodes have `lat`/`lon` directly; ways and relations have `center` (from `out center`). Tags are OSM key/value strings — values are always strings, including numbers. Verified with real requests.
+
+---
+
+## Tool Design Details
+
+### `nominatim_geocode`
+
+**Input:**
+
+```ts
+z.object({
+  // Free-form or structured — validated in handler (mutually exclusive)
+  query: z.string().optional()
+    .describe('Free-form search string (e.g., "Space Needle Seattle" or "1600 Pennsylvania Ave NW, Washington DC"). Cannot be combined with structured address fields.'),
+  street: z.string().optional()
+    .describe('House number and street name (structured query). Use with city/state/country fields. Cannot be combined with query.'),
+  city: z.string().optional()
+    .describe('City name (structured query).'),
+  county: z.string().optional()
+    .describe('County or district (structured query).'),
+  state: z.string().optional()
+    .describe('State or province (structured query).'),
+  country: z.string().optional()
+    .describe('Country name or ISO 3166-1 alpha-2 code (structured query).'),
+  postalcode: z.string().optional()
+    .describe('Postal or ZIP code (structured query).'),
+  limit: z.number().int().min(1).max(40).default(5)
+    .describe('Maximum results to return. Nominatim may return fewer if additional results do not sufficiently match the query. Max 40.'),
+  countrycodes: z.string().optional()
+    .describe('Restrict results to one or more countries. Comma-separated ISO 3166-1 alpha-2 codes (e.g., "us,ca"). Preferred over the structured "country" field when filtering.'),
+  layer: z.string().optional()
+    .describe('Filter by data layer. Comma-separated values: address, poi, railway, natural, manmade. Default: no restriction.'),
+  featureType: z.enum(['country', 'state', 'city', 'settlement']).optional()
+    .describe('Restrict results to a geographic feature type. Automatically implies the address layer.'),
+  extratags: z.boolean().default(false)
+    .describe('Include extra OSM tags when available (e.g., phone, website, opening_hours, wikidata). Increases response size.'),
+  language: z.string().optional()
+    .describe('Preferred language for result names (BCP 47 language code or Accept-Language string, e.g., "en", "de", "fr,en"). Defaults to local OSM language if unset.'),
+})
+```
+
+**Output:**
+
+```ts
+z.object({
+  results: z.array(z.object({
+    place_id: z.number().describe('Nominatim internal place ID. Use osm_type+osm_id for stable cross-server references.'),
+    osm_type: z.enum(['node', 'way', 'relation']).optional().describe('OSM object type.'),
+    osm_id: z.number().optional().describe('OSM object ID. Combine with osm_type for lookup.'),
+    lat: z.string().describe('Latitude (WGS84, as string from API).'),
+    lon: z.string().describe('Longitude (WGS84, as string from API).'),
+    display_name: z.string().describe('Full human-readable address string.'),
+    name: z.string().optional().describe('Feature name if applicable (e.g., "Space Needle"). Absent for address-only results.'),
+    category: z.string().optional().describe('OSM feature category (e.g., "amenity", "man_made", "boundary").'),
+    type: z.string().optional().describe('OSM feature type within category (e.g., "hospital", "tower", "administrative").'),
+    importance: z.number().optional().describe('Nominatim relevance score (0–1). Higher is more prominent globally.'),
+    address: z.record(z.string()).optional().describe('Structured address breakdown. Keys vary by feature type and country. Common keys: house_number, road, suburb, city, state, postcode, country, country_code.'),
+    boundingbox: z.tuple([z.string(), z.string(), z.string(), z.string()]).optional()
+      .describe('Bounding box [south, north, west, east] as strings.'),
+    extratags: z.record(z.string()).optional().describe('Additional OSM tags (phone, website, opening_hours, wikidata, etc.). Present only when extratags=true was requested.'),
+  })).describe('Geocoding results, ordered by Nominatim relevance (importance score descending).'),
+  total: z.number().describe('Number of results returned.'),
+  attribution: z.string().describe('Required data attribution: Data © OpenStreetMap contributors, ODbL 1.0.'),
+})
+```
+
+**Errors:**
+
+```ts
+errors: [
+  {
+    reason: 'no_results',
+    code: JsonRpcErrorCode.NotFound,
+    when: 'No places matched the query',
+    recovery: 'Try broader terms, remove constraints, or check spelling. For structured queries, try the free-form query parameter.',
+  },
+  {
+    reason: 'invalid_input',
+    code: JsonRpcErrorCode.InvalidParams,
+    when: 'Both query and structured fields are provided, or neither is provided',
+    recovery: 'Provide either the query parameter (free-form) or structured address fields (street, city, etc.), not both.',
+  },
+]
+```
+
+**Annotations:** `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: true`
+
+---
+
+### `nominatim_reverse`
+
+**Input:**
+
+```ts
+z.object({
+  lat: z.number().min(-90).max(90).describe('Latitude in WGS84 decimal degrees.'),
+  lon: z.number().min(-180).max(180).describe('Longitude in WGS84 decimal degrees.'),
+  zoom: z.number().int().min(3).max(18).default(18)
+    .describe('Address detail level, roughly corresponding to map zoom. 18=building, 16=street, 14=neighbourhood, 12=town, 10=city, 8=county, 5=state, 3=country.'),
+  layer: z.string().optional()
+    .describe('Restrict which OSM layer is matched. Comma-separated: address, poi, railway, natural, manmade. Default: address,poi.'),
+  extratags: z.boolean().default(false)
+    .describe('Include extra OSM tags when available (phone, website, opening_hours, wikidata, etc.).'),
+  language: z.string().optional()
+    .describe('Preferred language for the result (BCP 47 code or Accept-Language string).'),
+})
+```
+
+**Output:**
+
+```ts
+z.object({
+  result: z.object({
+    place_id: z.number().describe('Nominatim internal place ID.'),
+    osm_type: z.enum(['node', 'way', 'relation']).optional(),
+    osm_id: z.number().optional(),
+    lat: z.string().describe('Latitude of the matched OSM object.'),
+    lon: z.string().describe('Longitude of the matched OSM object.'),
+    display_name: z.string().describe('Full human-readable address.'),
+    name: z.string().optional().describe('Feature name, if the result is a named place.'),
+    category: z.string().optional(),
+    type: z.string().optional(),
+    address: z.record(z.string()).optional()
+      .describe('Structured address. Keys vary by feature type. Common: house_number, road, suburb, city, state, postcode, country, country_code.'),
+    boundingbox: z.tuple([z.string(), z.string(), z.string(), z.string()]).optional()
+      .describe('Bounding box [south, north, west, east] as strings.'),
+    extratags: z.record(z.string()).optional(),
+  }).describe('The closest matching OSM object at the given coordinates.'),
+  attribution: z.string().describe('Required data attribution.'),
+})
+```
+
+**Note:** Nominatim reverse geocoding finds the *closest* suitable OSM object, not necessarily the object whose polygon the coordinate falls in. In dense areas the result may differ from the expected address. For building-level accuracy, use zoom=18.
+
+**Implementation note:** When no OSM data covers the given coordinates, Nominatim returns HTTP 200 with body `{"error": "Unable to geocode"}` — not an empty or null response. The handler must detect this `error` key and throw `no_coverage`; it should not return a null result object.
+
+**Errors:**
+
+```ts
+errors: [
+  {
+    reason: 'no_coverage',
+    code: JsonRpcErrorCode.NotFound,
+    when: 'Nominatim returns {"error": "Unable to geocode"} — no OSM data at the given coordinates (e.g., open ocean or unmapped territory)',
+    recovery: 'Verify the coordinates are correct. Try a lower zoom value to match at a coarser level (e.g., zoom=10 for city-level).',
+  },
+]
+```
+
+**Annotations:** `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: true`
+
+---
+
+### `nominatim_lookup`
+
+**Input:**
+
+```ts
+z.object({
+  osm_ids: z.union([z.string(), z.array(z.string()).min(1).max(50)])
+    .describe('One or more OSM IDs, each prefixed with N (node), W (way), or R (relation). E.g., "N240109189", ["W50637691", "R146656"]. Up to 50 IDs per call.'),
+  extratags: z.boolean().default(false)
+    .describe('Include extra OSM tags (phone, website, wikidata, etc.).'),
+  language: z.string().optional()
+    .describe('Preferred language for names (BCP 47 code).'),
+})
+```
+
+**Output:** Same shape as `nominatim_geocode` (array of place results), plus `not_found` array for IDs that returned no result.
+
+**Errors:**
+
+```ts
+errors: [
+  {
+    reason: 'invalid_id_format',
+    code: JsonRpcErrorCode.InvalidParams,
+    when: 'An OSM ID is missing the N/W/R prefix or is otherwise malformed',
+    recovery: 'Prefix each ID with N (node), W (way), or R (relation), e.g., "N12345" not "12345".',
+  },
+]
+```
+
+**Annotations:** `readOnlyHint: true`, `idempotentHint: true`, `openWorldHint: true`
+
+---
+
+### `overpass_query_nearby`
+
+The primary Overpass convenience tool. Generates an Overpass QL `around` filter internally.
+
+**Input:**
+
+```ts
+z.object({
+  lat: z.number().min(-90).max(90).describe('Center latitude in WGS84 decimal degrees.'),
+  lon: z.number().min(-180).max(180).describe('Center longitude in WGS84 decimal degrees.'),
+  radius_meters: z.number().positive().max(50000).default(1000)
+    .describe('Search radius in meters. Max 50,000m (50km). Larger radii increase query time and result counts — keep under 5,000m for dense urban POI queries.'),
+  amenity: z.string().optional()
+    .describe('OSM amenity tag value (e.g., "hospital", "pharmacy", "restaurant", "school", "atm"). This is a shortcut for tag_key="amenity" + tag_value. Cannot be combined with tag_key/tag_value.'),
+  tag_key: z.string().optional()
+    .describe('OSM tag key for non-amenity queries (e.g., "leisure", "shop", "highway", "natural"). Use with tag_value. Cannot be combined with amenity.'),
+  tag_value: z.string().optional()
+    .describe('OSM tag value paired with tag_key (e.g., "park", "supermarket", "primary", "peak").'),
+  element_types: z.array(z.enum(['node', 'way', 'relation'])).default(['node', 'way'])
+    .describe('OSM element types to search. Ways cover most buildings and areas; nodes cover most standalone POIs. Add "relation" for complex structures like large hospital campuses.'),
+  limit: z.number().int().min(1).max(500).default(20)
+    .describe('Maximum results to return. Applied after the Overpass query — if the area has more features, they are truncated. Use smaller values to keep responses focused.'),
+  timeout_seconds: z.number().int().min(5).max(60).default(25)
+    .describe('Overpass query timeout in seconds. Increase for large radius or dense areas.'),
+})
+```
+
+**Output:**
+
+```ts
+z.object({
+  elements: z.array(z.object({
+    osm_type: z.enum(['node', 'way', 'relation']).describe('OSM element type.'),
+    osm_id: z.number().describe('OSM element ID. Use with osm_type for Nominatim lookup.'),
+    lat: z.number().optional().describe('Latitude (present for nodes and ways/relations with center computed).'),
+    lon: z.number().optional().describe('Longitude (same).'),
+    name: z.string().optional().describe('Feature name from OSM tags.'),
+    tags: z.record(z.string()).describe('All OSM tags for this feature. Values are always strings.'),
+  })).describe('Matching OSM features, up to the limit.'),
+  total_found: z.number().describe('Total features returned before limit truncation.'),
+  truncated: z.boolean().describe('True if results were cut at the limit. Reduce radius or add more specific tags to narrow the result set.'),
+  data_timestamp: z.string().describe('OSM data freshness timestamp from Overpass response.'),
+  attribution: z.string(),
+})
+```
+
+**Errors:**
+
+```ts
+errors: [
+  {
+    reason: 'query_timeout',
+    code: JsonRpcErrorCode.Timeout,
+    when: 'The Overpass query exceeded the timeout',
+    retryable: true,
+    recovery: 'Reduce radius_meters, add more specific tag filters, or increase timeout_seconds and retry.',
+  },
+  {
+    reason: 'rate_limited',
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    when: 'Overpass returns HTTP 429 — all 4 concurrent query slots are occupied',
+    retryable: true,
+    recovery: 'Wait a few seconds and retry. Reduce concurrent calls or switch to a private Overpass instance via OVERPASS_BASE_URL.',
+  },
+  {
+    reason: 'invalid_tag',
+    code: JsonRpcErrorCode.InvalidParams,
+    when: 'amenity and tag_key/tag_value are both provided, or neither is provided',
+    recovery: 'Provide either amenity (e.g., "hospital") or tag_key + tag_value (e.g., tag_key="leisure", tag_value="park"), but not both and not neither.',
+  },
+]
+```
+
+**Annotations:** `readOnlyHint: true`, `openWorldHint: true`
+
+---
+
+### `overpass_query_bbox`
+
+Same shape as `overpass_query_nearby` but spatial filter is a bounding box instead of a radius.
+
+**Input:**
+
+```ts
+z.object({
+  south: z.number().min(-90).max(90).describe('Southern boundary latitude (minimum latitude).'),
+  west: z.number().min(-180).max(180).describe('Western boundary longitude (minimum longitude).'),
+  north: z.number().min(-90).max(90).describe('Northern boundary latitude (maximum latitude).'),
+  east: z.number().min(-180).max(180).describe('Eastern boundary longitude (maximum longitude).'),
+  amenity: z.string().optional().describe('OSM amenity tag value shortcut (e.g., "cafe", "bench"). Cannot be combined with tag_key/tag_value.'),
+  tag_key: z.string().optional().describe('OSM tag key for non-amenity queries (e.g., "leisure", "shop", "natural"). Use with tag_value. Cannot be combined with amenity.'),
+  tag_value: z.string().optional().describe('OSM tag value paired with tag_key (e.g., "park", "supermarket", "peak").'),
+  element_types: z.array(z.enum(['node', 'way', 'relation'])).default(['node', 'way'])
+    .describe('OSM element types to search. Ways cover most buildings and areas; nodes cover most standalone POIs. Add "relation" for complex structures.'),
+  limit: z.number().int().min(1).max(500).default(20)
+    .describe('Maximum results to return. Applied after the Overpass query — if the area has more features, they are truncated.'),
+  timeout_seconds: z.number().int().min(5).max(60).default(25)
+    .describe('Overpass query timeout in seconds. Increase for large bounding boxes or dense areas.'),
+})
+```
+
+**Output:** Same shape as `overpass_query_nearby`.
+
+**Errors:** Same as `overpass_query_nearby` (query_timeout, rate_limited, invalid_tag — the same amenity/tag_key mutual-exclusion and both-required validation applies).
+
+**Annotations:** `readOnlyHint: true`, `openWorldHint: true`
+
+---
+
+### `overpass_query_raw`
+
+Escape hatch for full Overpass QL expressiveness. Use for multi-type queries, union queries, relation membership, historical queries, or any spatial operation the convenience tools don't cover.
+
+**Input:**
+
+```ts
+z.object({
+  query: z.string()
+    .describe('Overpass QL query string. Must include [out:json]. The server sets the endpoint and User-Agent; do not include those. Example: "[out:json][timeout:15];node[\\"natural\\"=\\"peak\\"](47.5,-122.5,47.7,-122.2);out body;"'),
+  timeout_seconds: z.number().int().min(5).max(180).default(30)
+    .describe('Query timeout in seconds. The [timeout:N] directive in the query string takes precedence if present. Max 180s.'),
+})
+```
+
+**Output:**
+
+```ts
+z.object({
+  elements: z.array(z.record(z.unknown())).describe('Raw Overpass API response elements. Structure varies by query type — nodes have lat/lon, ways have nodes[], relations have members[].'),
+  total_elements: z.number(),
+  data_timestamp: z.string().optional(),
+  attribution: z.string(),
+})
+```
+
+**Errors:**
+
+```ts
+errors: [
+  {
+    reason: 'query_error',
+    code: JsonRpcErrorCode.InvalidParams,
+    when: 'Overpass returned a 400 error with an HTML body indicating malformed query syntax',
+    recovery: 'Check Overpass QL syntax. Validate the query at overpass-turbo.eu before using this tool.',
+  },
+  {
+    reason: 'query_timeout',
+    code: JsonRpcErrorCode.Timeout,
+    when: 'The query exceeded its timeout (Overpass runtime error in response body)',
+    retryable: true,
+    recovery: 'Add [timeout:N] to the query string with a higher value, or simplify the query (smaller bbox, fewer element types, more specific tags).',
+  },
+  {
+    reason: 'result_too_large',
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    when: 'Overpass runtime error: "Query run out of memory" — result set exceeds the server memory limit (typically 512 MB)',
+    recovery: 'Narrow the query scope: reduce the bbox or around radius, add more tag filters, limit element types, or add [maxsize:N] to the query.',
+  },
+  {
+    reason: 'rate_limited',
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    when: 'Overpass returns HTTP 429 — all 4 concurrent query slots are occupied',
+    retryable: true,
+    recovery: 'Wait a few seconds and retry. Switch to a private Overpass instance via OVERPASS_BASE_URL for higher concurrency.',
+  },
+]
+```
+
+**Annotations:** `readOnlyHint: true`, `openWorldHint: true`
+
+---
+
+## Workflow Analysis
+
+### Common agent workflow: place name → NWS weather
+
+| # | Tool | Purpose |
+|:--|:-----|:--------|
+| 1 | `nominatim_geocode` | "Seattle" → `{lat: 47.6062, lon: -122.3321}` |
+| 2 | `nws_get_forecast` (NWS server) | coordinates → weather forecast |
+
+### Common agent workflow: reverse geocode + POI search
+
+| # | Tool | Purpose |
+|:--|:-----|:--------|
+| 1 | `nominatim_reverse` | coordinates → "Belltown, Seattle, WA" |
+| 2 | `overpass_query_nearby` | same coordinates, `amenity="pharmacy"`, `radius_meters=500` → nearby pharmacies |
+
+### Common agent workflow: known OSM ID → details
+
+| # | Tool | Purpose |
+|:--|:-----|:--------|
+| 1 | `nominatim_lookup` | `osm_ids=["W169511257"]` → Harborview Medical Center details |
+
+---
+
+## Design Decisions
+
+**Two services, one server.** Nominatim and Overpass are conceptually separate APIs, but they complement each other to form a complete location-resolution story. Splitting into two servers would force every agent to configure two MCP servers for what is essentially one domain. The cohesive 6-tool surface is easy to understand and the naming prefix (`nominatim_*` vs `overpass_*`) makes the source API visible without hiding it.
+
+**`nominatim_geocode` handles both free-form and structured in one tool.** The two modes are mutually exclusive at the Nominatim API level, but they serve the same user goal (forward geocoding). One tool with clear input validation beats two tools that users have to choose between. Handler validates: `query` XOR structured fields.
+
+**No `nominatim_search_places` tool.** The Nominatim search endpoint has a "special phrases" feature (e.g., "restaurants in Berlin") that can return place-type results. This is not distinct enough from `nominatim_geocode` to warrant a separate tool — `nominatim_geocode` with a free-form query handles it. For exhaustive POI queries by area, Overpass is the right tool per Nominatim's own documentation.
+
+**`overpass_query_nearby` and `overpass_query_bbox` as separate tools** (not a single tool with a `mode` param). The two spatial filter types have meaningfully different inputs: around requires a center + radius, bbox requires four coordinates. Combining them into one tool would require either awkward mutually-exclusive groups or an opaque `mode` enum. The cognitive cost of two clearly named tools is lower than one opaque tool.
+
+**`amenity` shortcut in Overpass convenience tools.** The `amenity` tag covers the vast majority of "what's near me?" POI queries (hospital, pharmacy, restaurant, cafe, etc.). Providing it as a dedicated parameter with a clear description avoids forcing users to learn Overpass's `tag_key`/`tag_value` pattern for the most common case. Both parameters are optional; handler validates that exactly one is provided — both-provided and neither-provided both error with `invalid_tag`.
+
+**`out center tags` in generated Overpass queries.** Ways and relations don't have a single lat/lon — they have a set of node references. `out center` computes a centroid and includes it in the response, which is correct for POI purposes. This normalizes the output so all element types have a usable location. The alternative (`out geom`) would include full node arrays and is appropriate for route/area rendering but not for POI queries.
+
+**Session-level caching in `ctx.state`.** Nominatim's usage policy requires caching. Geocoding the same query twice in one session is wasteful and potentially policy-violating. Cache keys should include all query parameters. TTL: 60 minutes (geocoding results change rarely within a session).
+
+**Rate limiting in NominatimService.** The 1 req/sec hard limit must be enforced server-side. A simple token bucket (1 token/sec, max burst 1) is sufficient. Per the usage policy, MCP tools shouldn't generate bursts of automated requests that could resemble bulk geocoding.
+
+**No autocomplete.** The Nominatim usage policy explicitly forbids autocomplete use. The tools do not accept partial inputs in a way that would enable autocomplete patterns — all queries are submitted as complete search strings.
+
+**No geometry output in Nominatim tools.** The `polygon_geojson`, `polygon_svg`, etc. parameters add boundary geometry. This is useful for rendering but would bloat the tool output significantly. Deferred — add as an optional parameter if agents consistently need polygon boundaries.
+
+**`nominatim_lookup` included despite lower frequency.** When an agent workflow has an OSM ID from a prior step (e.g., from an Overpass result), lookup is the efficient path to get full Nominatim address details — a single batch request instead of a geocoding round trip. Supports up to 50 IDs per call.
+
+---
+
+## Known Limitations
+
+**Nominatim reverse geocoding is "closest object," not "containing polygon."** The API finds the nearest indexed OSM object, which may not be the building or parcel the coordinate is inside. In dense urban areas, the result can be a neighboring feature. This is inherent to the API — not something the server can fix. Documented in the `nominatim_reverse` tool description.
+
+**Overpass results are not sorted by distance.** The `around` filter returns all features within the radius but the order is arbitrary (OSM element ID order). Agents that need nearest-first ordering must sort themselves using the returned coordinates.
+
+**Nominatim does not return exhaustive POI lists.** The search endpoint returns the best matches for a query, not all matching objects. For exhaustive lists ("all pharmacies in Seattle"), use Overpass. Nominatim's own documentation states this explicitly.
+
+**Overpass data has a lag of a few minutes** relative to the OSM main database. The `data_timestamp` in tool output surfaces this.
+
+**Rate limits are per-instance.** The default Nominatim instance (nominatim.openstreetmap.org) has a 1 req/sec hard limit. The default Overpass instance allows up to 4 concurrent queries. Both can be overridden via config to use private or mirror instances when higher throughput is needed.
+
+**No Overpass history/attic queries in convenience tools.** The raw query tool supports Overpass's `[date:"..."]` and `retro` syntax if users need historical snapshots, but the convenience tools don't expose this.
+
+---
+
+## API Reference
+
+### Nominatim
+
+| Parameter | Notes |
+|:----------|:------|
+| Base URL | `https://nominatim.openstreetmap.org` |
+| Format | Always use `format=jsonv2` (default for `/search` is the web UI, not JSON) |
+| Rate limit | 1 req/sec; valid User-Agent required |
+| Search limit | Max 40 results per `/search` request |
+| Lookup batch | Max 50 OSM IDs per `/lookup` request |
+| Address keys | Vary by country/feature type; not normalized across results |
+| Importance | 0–1 float; higher = more globally prominent |
+| `place_id` | Internal to the Nominatim instance — not portable across deployments. Use `osm_type` + `osm_id` for stable references |
+
+### Overpass QL essentials
+
+```
+[out:json][timeout:25];
+(
+  node["key"="value"](filter);
+  way["key"="value"](filter);
+  relation["key"="value"](filter);
+);
+out center tags;
+```
+
+**Filters:**
+- Around: `(around:radius_meters,lat,lon)` — all three elements in one `around` statement
+- Bbox: `(south,west,north,east)` — Overpass bbox order is S,W,N,E (latitude-first)
+- Union: wrap multiple statements in `( ... );`
+
+**Output modes:**
+- `out body` — element type, id, position, tags
+- `out center tags` — adds centroid for ways/relations (use for POI queries)
+- `out geom` — full geometry (ways include all node coordinates)
+
+**Rate limits:** 4 concurrent slots; ≤10,000 queries/day; ≤1 GB/day. Each `[timeout:N]` slot held for N seconds even if query finishes early.
+
+**Status endpoint:** `GET /api/status` — returns connected client ID, current time, available slots.
+
+### Common OSM tag taxonomy for POI queries
+
+| Category | Tag key | Example values |
+|:---------|:--------|:---------------|
+| Medical | `amenity` | `hospital`, `clinic`, `pharmacy`, `dentist`, `doctors` |
+| Food/drink | `amenity` | `restaurant`, `cafe`, `fast_food`, `bar`, `pub` |
+| Transport | `amenity` | `parking`, `bus_station`, `ferry_terminal`; `public_transport`=`stop_position` |
+| Education | `amenity` | `school`, `university`, `college`, `library` |
+| Finance | `amenity` | `bank`, `atm` |
+| Recreation | `leisure` | `park`, `playground`, `sports_centre`, `swimming_pool` |
+| Shops | `shop` | `supermarket`, `pharmacy`, `bakery`, `convenience` |
+| Nature | `natural` | `peak`, `water`, `forest`, `beach` |
+| Infrastructure | `highway` | `primary`, `residential`; `building`=`yes` |
+
+---
+
+## Decisions Log
+
+| Date | Decision | Rationale |
+|:-----|:---------|:----------|
+| 2026-05-23 | Two distinct API prefixes (`nominatim_*`, `overpass_*`) rather than unified `osm_*` | The two APIs have different query models, rate limits, and output shapes. Prefixing with the actual API name makes the source API explicit, which helps agents understand the operational context (rate limits, data freshness, appropriate use cases). |
+| 2026-05-23 | Include all three Nominatim endpoints as separate tools | Search, reverse, and lookup are genuinely distinct operations with different inputs and use cases. Consolidating them under a mode enum would obscure the required-vs-optional parameter differences (e.g., `lat`/`lon` only for reverse). |
+| 2026-05-23 | Overpass convenience tools separate from raw query | Convenience tools for `around` and `bbox` cover 90% of use cases without requiring Overpass QL knowledge. The raw tool is an explicit escape hatch, not the default path. This matches the skill's "shortcut + escape hatch" pattern. |
+| 2026-05-23 | No `nominatim_details` tool (debug endpoint excluded) | Nominatim's `/details` endpoint is documented as "for debugging only" and its usage is explicitly called out as forbidden in the usage policy ("Scraping of details... may not be downloaded automatically"). Excluded. |
+| 2026-05-23 | No polygon output in initial release | GeoJSON/KML polygon output for Nominatim results would add significant output size with unclear benefit in most agent workflows. Deferred until there's a demonstrated need. |
+| 2026-05-23 | `out center tags` rather than `out body` for convenience tools | `out center` normalizes the position representation across nodes, ways, and relations. `out body` for ways would return node ID arrays instead of coordinates, requiring a second `out;` step or the caller to discard position. |
+| 2026-05-23 | Session-level caching mandatory in NominatimService | The Nominatim usage policy explicitly requires caching. Given MCP servers can receive many tool calls in quick succession (agent loops), caching the same geocode query within a session is both a policy requirement and a performance benefit. |
+| 2026-05-23 | `NOMINATIM_BASE_URL` and `OVERPASS_BASE_URL` as configurable env vars | Users operating private or mirror instances (needed for high-throughput use) must be able to redirect the server without code changes. Also enables pointing at local test instances. |
+| 2026-05-23 | No prompts | The domain is pure data lookup — there are no recurring agent interaction patterns that benefit from a structured prompt template. Tool descriptions carry sufficient guidance. |
