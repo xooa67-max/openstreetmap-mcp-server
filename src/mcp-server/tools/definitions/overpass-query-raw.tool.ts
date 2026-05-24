@@ -90,8 +90,18 @@ export const overpassQueryRaw = tool('overpass_query_raw', {
   ],
 
   async handler(input, ctx) {
-    // Inject timeout if the query doesn't already include one
     let ql = input.query.trim();
+
+    // Preflight: require [out:json] before calling the service.
+    // Without it Overpass returns XML, JSON.parse throws, and the error surfaces as InternalError.
+    if (!ql.includes('[out:json]')) {
+      throw ctx.fail(
+        'query_error',
+        'Query is missing [out:json]. Add [out:json] at the start of the settings block (e.g. "[out:json][timeout:30];...").',
+      );
+    }
+
+    // Inject timeout if the query doesn't already include one
     if (!ql.includes('[timeout:')) {
       ql = ql.replace('[out:json]', `[out:json][timeout:${input.timeout_seconds}]`);
     }
