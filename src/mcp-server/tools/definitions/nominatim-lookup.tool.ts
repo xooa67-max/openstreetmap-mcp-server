@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getNominatimService } from '@/services/nominatim/nominatim-service.js';
+import { appendPlaceLines } from './nominatim-format.js';
 
 const ATTRIBUTION = 'Data © OpenStreetMap contributors, ODbL 1.0';
 
@@ -78,7 +79,7 @@ export const nominatimLookup = tool('nominatim_lookup', {
   errors: [
     {
       reason: 'invalid_id_format',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'An OSM ID is missing the N/W/R prefix or is otherwise malformed.',
       recovery:
         'Prefix each ID with N (node), W (way), or R (relation), e.g., "N12345" not "12345".',
@@ -111,14 +112,11 @@ export const nominatimLookup = tool('nominatim_lookup', {
     );
 
     const foundOsmIds = new Set(
-      results
-        .map((r) => {
-          if (r.osm_type && r.osm_id !== undefined) {
-            return `${r.osm_type.charAt(0).toUpperCase()}${r.osm_id}`;
-          }
-          return null;
-        })
-        .filter((id): id is string => id !== null),
+      results.flatMap((r) =>
+        r.osm_type && r.osm_id !== undefined
+          ? [`${r.osm_type.charAt(0).toUpperCase()}${r.osm_id}`]
+          : [],
+      ),
     );
 
     const notFound = normalizedIds.filter((id) => !foundOsmIds.has(id));
@@ -156,28 +154,7 @@ export const nominatimLookup = tool('nominatim_lookup', {
       lines.push(`**Address:** ${r.display_name}`);
       lines.push(`**Coordinates:** ${r.lat}, ${r.lon}`);
       lines.push(`**Place ID:** ${r.place_id}`);
-      if (r.osm_type && r.osm_id !== undefined) {
-        lines.push(`**OSM:** ${r.osm_type.charAt(0).toUpperCase()}${r.osm_id}`);
-      }
-      if (r.category) lines.push(`**Category:** ${r.category}${r.type ? ` / ${r.type}` : ''}`);
-      if (r.address) {
-        const addrParts = Object.entries(r.address)
-          .filter(([k]) => !['country_code', 'ISO3166-2-lvl4'].includes(k))
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(', ');
-        if (addrParts) lines.push(`**Address details:** ${addrParts}`);
-      }
-      if (r.boundingbox) {
-        lines.push(
-          `**Bounding box:** S:${r.boundingbox[0]} N:${r.boundingbox[1]} W:${r.boundingbox[2]} E:${r.boundingbox[3]}`,
-        );
-      }
-      if (r.extratags && Object.keys(r.extratags).length > 0) {
-        const extra = Object.entries(r.extratags)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(', ');
-        lines.push(`**Extra tags:** ${extra}`);
-      }
+      appendPlaceLines(lines, r);
       lines.push('');
     }
     if (result.not_found.length > 0) {

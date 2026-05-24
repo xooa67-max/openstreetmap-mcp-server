@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getOverpassService } from '@/services/overpass/overpass-service.js';
+import { resolveTagInput } from './overpass-tag-input.js';
 
 const ATTRIBUTION = 'Data © OpenStreetMap contributors, ODbL 1.0';
 
@@ -114,7 +115,7 @@ export const overpassQueryNearby = tool('overpass_query_nearby', {
   errors: [
     {
       reason: 'invalid_tag',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'Both amenity and tag_key/tag_value are provided, or neither is provided.',
       recovery:
         'Provide either amenity (e.g., "hospital") or tag_key + tag_value (e.g., tag_key="leisure", tag_value="park"), but not both and not neither.',
@@ -138,23 +139,17 @@ export const overpassQueryNearby = tool('overpass_query_nearby', {
   ],
 
   async handler(input, ctx) {
-    const hasAmenity = Boolean(input.amenity?.trim());
-    const hasTagKey = Boolean(input.tag_key?.trim());
-    const hasTagValue = Boolean(input.tag_value?.trim());
-
-    if (hasAmenity && (hasTagKey || hasTagValue)) {
-      throw ctx.fail('invalid_tag', 'Cannot combine amenity with tag_key/tag_value.', {
-        ...ctx.recoveryFor('invalid_tag'),
-      });
+    const resolved = resolveTagInput(input);
+    if ('error' in resolved) {
+      throw ctx.fail(
+        'invalid_tag',
+        resolved.error === 'both'
+          ? 'Cannot combine amenity with tag_key/tag_value.'
+          : 'Provide either amenity or tag_key + tag_value.',
+        { ...ctx.recoveryFor('invalid_tag') },
+      );
     }
-    if (!hasAmenity && !hasTagKey) {
-      throw ctx.fail('invalid_tag', 'Provide either amenity or tag_key + tag_value.', {
-        ...ctx.recoveryFor('invalid_tag'),
-      });
-    }
-
-    const tagKey = hasAmenity ? 'amenity' : (input.tag_key ?? '');
-    const tagValue = hasAmenity ? (input.amenity ?? '') : (input.tag_value ?? '');
+    const { tagKey, tagValue } = resolved;
 
     const service = getOverpassService();
     const ql = service.buildAroundQuery({

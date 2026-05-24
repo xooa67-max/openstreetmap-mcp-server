@@ -95,25 +95,28 @@ export class NominatimService {
   async search(params: NominatimSearchParams, ctx: Context): Promise<NominatimPlace[]> {
     const cacheKey = this.buildCacheKey('search', params);
     const cached = await ctx.state.get<NominatimPlace[]>(cacheKey);
-    if (cached !== null) {
+    if (cached != null) {
       ctx.log.debug('Nominatim search cache hit', { cacheKey });
       return cached;
     }
 
     const queryParams: Record<string, string> = {};
-    if (params.q) queryParams.q = params.q;
-    if (params.street) queryParams.street = params.street;
-    if (params.city) queryParams.city = params.city;
-    if (params.county) queryParams.county = params.county;
-    if (params.state) queryParams.state = params.state;
-    if (params.country) queryParams.country = params.country;
-    if (params.postalcode) queryParams.postalcode = params.postalcode;
-    if (params.limit) queryParams.limit = String(params.limit);
-    if (params.countrycodes) queryParams.countrycodes = params.countrycodes;
-    if (params.layer) queryParams.layer = params.layer;
-    if (params.featureType) queryParams.featuretype = params.featureType;
+    const setIfTruthy = (key: string, val: string | number | boolean | undefined) => {
+      if (val) queryParams[key] = String(val);
+    };
+    setIfTruthy('q', params.q);
+    setIfTruthy('street', params.street);
+    setIfTruthy('city', params.city);
+    setIfTruthy('county', params.county);
+    setIfTruthy('state', params.state);
+    setIfTruthy('country', params.country);
+    setIfTruthy('postalcode', params.postalcode);
+    setIfTruthy('limit', params.limit);
+    setIfTruthy('countrycodes', params.countrycodes);
+    setIfTruthy('layer', params.layer);
+    setIfTruthy('featuretype', params.featureType);
     if (params.extratags) queryParams.extratags = '1';
-    if (params.language) queryParams.accept_language = params.language;
+    setIfTruthy('accept_language', params.language);
 
     ctx.log.info('Nominatim search', { params });
 
@@ -134,7 +137,7 @@ export class NominatimService {
   async reverse(params: NominatimReverseParams, ctx: Context): Promise<NominatimPlace> {
     const cacheKey = this.buildCacheKey('reverse', params);
     const cached = await ctx.state.get<NominatimPlace>(cacheKey);
-    if (cached !== null) {
+    if (cached != null) {
       ctx.log.debug('Nominatim reverse cache hit', { cacheKey });
       return cached;
     }
@@ -167,7 +170,7 @@ export class NominatimService {
   async lookup(params: NominatimLookupParams, ctx: Context): Promise<NominatimPlace[]> {
     const cacheKey = this.buildCacheKey('lookup', params);
     const cached = await ctx.state.get<NominatimPlace[]>(cacheKey);
-    if (cached !== null) {
+    if (cached != null) {
       ctx.log.debug('Nominatim lookup cache hit', { cacheKey });
       return cached;
     }

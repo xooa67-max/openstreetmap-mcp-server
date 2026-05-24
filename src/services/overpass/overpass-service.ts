@@ -119,16 +119,17 @@ export class OverpassService {
           );
         }
 
-        const data = JSON.parse(text) as OverpassResponse;
+        const data = JSON.parse(text) as OverpassResponse & { remark?: string };
 
         // Detect runtime errors embedded in JSON response
-        if ('remark' in data) {
-          const remark = String((data as Record<string, unknown>).remark);
-          if (OVERPASS_TIMEOUT_PATTERN.test(remark)) {
-            throw timeoutError(`Overpass query timed out: ${remark}`, { reason: 'query_timeout' });
+        if (data.remark) {
+          if (OVERPASS_TIMEOUT_PATTERN.test(data.remark)) {
+            throw timeoutError(`Overpass query timed out: ${data.remark}`, {
+              reason: 'query_timeout',
+            });
           }
-          if (OVERPASS_OOM_PATTERN.test(remark)) {
-            throw serviceUnavailable(`Overpass ran out of memory: ${remark}`, {
+          if (OVERPASS_OOM_PATTERN.test(data.remark)) {
+            throw serviceUnavailable(`Overpass ran out of memory: ${data.remark}`, {
               reason: 'result_too_large',
             });
           }

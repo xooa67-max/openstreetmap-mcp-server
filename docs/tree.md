@@ -1,6 +1,6 @@
 # nominatim-mcp-server - Directory Structure
 
-Generated on: 2026-05-24 03:30:38
+Generated on: 2026-05-24 21:53:12
 
 ```text
 nominatim-mcp-server/
@@ -79,6 +79,8 @@ nominatim-mcp-server/
 │   │   └── SKILL.md
 │   ├── field-test/
 │   │   └── SKILL.md
+│   ├── git-wrapup/
+│   │   └── SKILL.md
 │   ├── maintenance/
 │   │   └── SKILL.md
 │   ├── migrate-mcp-ts-template/
@@ -112,12 +114,14 @@ nominatim-mcp-server/
 │   │   │   └── definitions/
 │   │   └── tools/
 │   │       └── definitions/
+│   │           ├── nominatim-format.ts
 │   │           ├── nominatim-geocode.tool.ts
 │   │           ├── nominatim-lookup.tool.ts
 │   │           ├── nominatim-reverse.tool.ts
 │   │           ├── overpass-query-bbox.tool.ts
 │   │           ├── overpass-query-nearby.tool.ts
-│   │           └── overpass-query-raw.tool.ts
+│   │           ├── overpass-query-raw.tool.ts
+│   │           └── overpass-tag-input.ts
 │   ├── services/
 │   │   ├── nominatim/
 │   │   │   ├── nominatim-service.ts

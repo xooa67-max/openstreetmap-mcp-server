@@ -59,7 +59,7 @@ export const overpassQueryRaw = tool('overpass_query_raw', {
   errors: [
     {
       reason: 'query_error',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'Overpass returned a 400 error — malformed query syntax.',
       recovery:
         'Check Overpass QL syntax. Validate the query at overpass-turbo.eu before using this tool.',

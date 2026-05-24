@@ -6,6 +6,7 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getNominatimService } from '@/services/nominatim/nominatim-service.js';
+import { appendPlaceLines } from './nominatim-format.js';
 
 const ATTRIBUTION = 'Data © OpenStreetMap contributors, ODbL 1.0';
 
@@ -156,7 +157,7 @@ export const nominatimGeocode = tool('nominatim_geocode', {
     },
     {
       reason: 'invalid_input',
-      code: JsonRpcErrorCode.InvalidParams,
+      code: JsonRpcErrorCode.ValidationError,
       when: 'Both query and structured fields are provided, or neither is provided.',
       recovery:
         'Provide either the query parameter (free-form) or structured address fields (street, city, etc.), not both.',
@@ -250,29 +251,8 @@ export const nominatimGeocode = tool('nominatim_geocode', {
       lines.push(`**Address:** ${r.display_name}`);
       lines.push(`**Coordinates:** ${r.lat}, ${r.lon}`);
       lines.push(`**Place ID:** ${r.place_id}`);
-      if (r.osm_type && r.osm_id !== undefined) {
-        lines.push(`**OSM:** ${r.osm_type.charAt(0).toUpperCase()}${r.osm_id}`);
-      }
-      if (r.category) lines.push(`**Category:** ${r.category}${r.type ? ` / ${r.type}` : ''}`);
       if (r.importance !== undefined) lines.push(`**Importance:** ${r.importance.toFixed(3)}`);
-      if (r.address) {
-        const addrParts = Object.entries(r.address)
-          .filter(([k]) => !['country_code', 'ISO3166-2-lvl4'].includes(k))
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(', ');
-        if (addrParts) lines.push(`**Address details:** ${addrParts}`);
-      }
-      if (r.boundingbox) {
-        lines.push(
-          `**Bounding box:** S:${r.boundingbox[0]} N:${r.boundingbox[1]} W:${r.boundingbox[2]} E:${r.boundingbox[3]}`,
-        );
-      }
-      if (r.extratags && Object.keys(r.extratags).length > 0) {
-        const extra = Object.entries(r.extratags)
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(', ');
-        lines.push(`**Extra tags:** ${extra}`);
-      }
+      appendPlaceLines(lines, r);
       lines.push('');
     }
     lines.push(`*${result.attribution}*`);

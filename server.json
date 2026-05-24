@@ -12,14 +12,14 @@
       "url": "https://nominatim.caseyjhand.com/mcp"
     }
   ],
-  "version": "0.1.7",
+  "version": "0.1.8",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/nominatim-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.1.7",
+      "version": "0.1.8",
       "packageArguments": [
         {
           "type": "positional",
@@ -43,7 +43,7 @@
           "description": "User-Agent sent to Nominatim and Overpass. Required by usage policy.",
           "format": "string",
           "isRequired": false,
-          "default": "nominatim-mcp-server/0.1.7"
+          "default": "nominatim-mcp-server/0.1.8"
         },
         {
           "name": "OVERPASS_BASE_URL",
@@ -69,7 +69,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/nominatim-mcp-server",
       "runtimeHint": "bun",
-      "version": "0.1.7",
+      "version": "0.1.8",
       "packageArguments": [
         {
           "type": "positional",
@@ -127,7 +127,7 @@
           "description": "User-Agent sent to Nominatim and Overpass. Required by usage policy.",
           "format": "string",
           "isRequired": false,
-          "default": "nominatim-mcp-server/0.1.7"
+          "default": "nominatim-mcp-server/0.1.8"
         },
         {
           "name": "OVERPASS_BASE_URL",

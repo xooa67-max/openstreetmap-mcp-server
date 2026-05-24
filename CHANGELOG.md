@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.8](changelog/0.1.x/0.1.8.md) — 2026-05-24
+
+Code simplification: shared format/tag helpers, flatMap, Set; error codes ValidationError; mcp-ts-core ^0.9.7 → ^0.9.9
+
 ## [0.1.7](changelog/0.1.x/0.1.7.md) — 2026-05-24
 
 Fix HTTP 406 on all Overpass tools: add missing User-Agent header; read version dynamically from package.json
