@@ -4,9 +4,12 @@
 # This stage installs all dependencies (including dev), builds the TypeScript
 # source code into JavaScript, and prepares the production assets.
 # ==============================================================================
-FROM oven/bun:1.3 AS build
+FROM node:24-slim AS build
 
 WORKDIR /usr/src/app
+
+# Install bun for dependency management (faster installs, frozen lockfile support)
+RUN npm install -g bun@1.3
 
 # Copy dependency manifests for optimized layer caching
 COPY package.json bun.lock ./
@@ -18,7 +21,7 @@ RUN bun install --frozen-lockfile
 COPY . .
 
 # Build the application
-RUN bun run build
+RUN npm run build
 
 
 # ==============================================================================
