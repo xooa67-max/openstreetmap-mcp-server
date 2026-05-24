@@ -3,8 +3,24 @@
  * @module config/server-config
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from '@cyanheads/mcp-ts-core';
 import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
+
+/** Read version from package.json at startup so the User-Agent stays in sync. */
+function readPackageVersion(): string {
+  try {
+    const pkgPath = resolve(dirname(fileURLToPath(import.meta.url)), '../../package.json');
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
+const defaultUserAgent = `nominatim-mcp-server/${readPackageVersion()}`;
 
 const ServerConfigSchema = z.object({
   nominatimBaseUrl: z
@@ -19,8 +35,8 @@ const ServerConfigSchema = z.object({
     .describe('Overpass API endpoint URL. Override to use a mirror or private instance.'),
   nominatimUserAgent: z
     .string()
-    .default('nominatim-mcp-server/0.1.0')
-    .describe('User-Agent sent to Nominatim. Required by usage policy.'),
+    .default(defaultUserAgent)
+    .describe('User-Agent sent to Nominatim and Overpass. Required by usage policy.'),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;

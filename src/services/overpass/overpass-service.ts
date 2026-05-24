@@ -84,7 +84,10 @@ export class OverpassService {
       async () => {
         const response = await fetch(this.endpoint(), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': getServerConfig().nominatimUserAgent,
+          },
           body: `data=${encodeURIComponent(query)}`,
           signal: ctx.signal,
         });

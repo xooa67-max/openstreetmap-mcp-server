@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/nominatim-mcp-server",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "mcpName": "io.github.cyanheads/nominatim-mcp-server",
   "description": "Geocode, reverse geocode, and run Overpass spatial queries on OpenStreetMap data via MCP. STDIO or Streamable HTTP.",
   "type": "module",
@@ -35,8 +35,6 @@
     "model-context-protocol",
     "typescript",
     "bun",
-    "stdio",
-    "streamable-http",
     "ai-agent",
     "nominatim",
     "openstreetmap",
