@@ -1,6 +1,6 @@
 # openstreetmap-mcp-server - Directory Structure
 
-Generated on: 2026-05-29 05:35:27
+Generated on: 2026-05-30 09:52:37
 
 ```text
 openstreetmap-mcp-server/
@@ -150,6 +150,7 @@ openstreetmap-mcp-server/
 ├── .env.example
 ├── .gitignore
 ├── .mcpbignore
+├── AGENTS.md
 ├── biome.json
 ├── bun.lock
 ├── bunfig.toml
